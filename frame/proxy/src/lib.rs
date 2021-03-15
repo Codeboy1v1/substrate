@@ -55,6 +55,7 @@ use frame_system::{self as system, ensure_signed};
 use frame_support::dispatch::DispatchError;
 pub use weights::WeightInfo;
 
+type CallHashOf<T> = <<T as Config>::CallHasher as Hash>::Output;
 
 
 type BalanceOf<T> = <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
@@ -92,7 +93,7 @@ pub mod pallet {
 	use super::*;
 
 	#[pallet::pallet]
-	#[pallet::generate_store($visibility_of_trait_store trait Store)]
+	#[pallet::generate_store(pub(super) trait Store)]
 	pub struct Pallet<T>(_);
 
 	/// Configuration trait.
@@ -156,17 +157,12 @@ pub mod pallet {
 		#[pallet::constant]
 		type AnnouncementDepositFactor: Get<BalanceOf<Self>>;
 	}
-}
 
-type CallHashOf<T> = <<T as Config>::CallHasher as Hash>::Output;
+	#[pallet::hooks]
+	impl<T: Config> Hooks for Pallet<T> {}
 
-decl_module! {
-	pub struct Module<T: Config> for enum Call where origin: T::Origin {
-		type Error = Error<T>;
-
-		/// Deposit one of this module's events by using the default implementation.
-		fn deposit_event() = default;
-
+	#[pallet::call]
+	impl<T: Config> Pallet<T> {
 		/// Dispatch the given `call` from an account that the sender is authorised for through
 		/// `add_proxy`.
 		///
@@ -182,24 +178,27 @@ decl_module! {
 		/// # <weight>
 		/// Weight is a function of the number of proxies the user has (P).
 		/// # </weight>
-		#[weight = {
+		#[pallet::weight({
 			let di = call.get_dispatch_info();
 			(T::WeightInfo::proxy(T::MaxProxies::get().into())
 				.saturating_add(di.weight)
 				 // AccountData for inner call origin accountdata.
 				.saturating_add(T::DbWeight::get().reads_writes(1, 1)),
 			di.class)
-		}]
-		fn proxy(origin,
+		})]
+		fn proxy(
+			origin: OriginFor<T>,
 			real: T::AccountId,
 			force_proxy_type: Option<T::ProxyType>,
 			call: Box<<T as Config>::Call>,
-		) {
+		) -> DispatchResultWithPostInfo {
 			let who = ensure_signed(origin)?;
 			let def = Self::find_proxy(&real, &who, force_proxy_type)?;
 			ensure!(def.delay.is_zero(), Error::<T>::Unannounced);
 
 			Self::do_proxy(def, real, *call);
+
+			Ok(().into())
 		}
 
 		/// Register a proxy account for the sender that is able to make calls on its behalf.
@@ -215,12 +214,13 @@ decl_module! {
 		/// # <weight>
 		/// Weight is a function of the number of proxies the user has (P).
 		/// # </weight>
-		#[weight = T::WeightInfo::add_proxy(T::MaxProxies::get().into())]
-		fn add_proxy(origin,
+		#[pallet::weight(T::WeightInfo::add_proxy(T::MaxProxies::get().into()))]
+		fn add_proxy(
+			origin: OriginFor<T>,
 			delegate: T::AccountId,
 			proxy_type: T::ProxyType,
 			delay: T::BlockNumber,
-		) -> DispatchResult {
+		) -> DispatchResultWithPostInfo {
 			let who = ensure_signed(origin)?;
 			Self::add_proxy_delegate(&who, delegate, proxy_type, delay)
 		}
@@ -236,12 +236,13 @@ decl_module! {
 		/// # <weight>
 		/// Weight is a function of the number of proxies the user has (P).
 		/// # </weight>
-		#[weight = T::WeightInfo::remove_proxy(T::MaxProxies::get().into())]
-		fn remove_proxy(origin,
+		#[pallet::weight(T::WeightInfo::remove_proxy(T::MaxProxies::get().into()))]
+		fn remove_proxy(
+			origin: OriginFor<T>,
 			delegate: T::AccountId,
 			proxy_type: T::ProxyType,
 			delay: T::BlockNumber,
-		) -> DispatchResult {
+		) -> DispatchResultWithPostInfo {
 			let who = ensure_signed(origin)?;
 			Self::remove_proxy_delegate(&who, delegate, proxy_type, delay)
 		}
@@ -256,11 +257,13 @@ decl_module! {
 		/// # <weight>
 		/// Weight is a function of the number of proxies the user has (P).
 		/// # </weight>
-		#[weight = T::WeightInfo::remove_proxies(T::MaxProxies::get().into())]
-		fn remove_proxies(origin) {
+		#[pallet::weight(T::WeightInfo::remove_proxies(T::MaxProxies::get().into()))]
+		fn remove_proxies(origin: OriginFor<T>) -> DispatchResultWithPostInfo {
 			let who = ensure_signed(origin)?;
 			let (_, old_deposit) = Proxies::<T>::take(&who);
 			T::Currency::unreserve(&who, old_deposit);
+
+			Ok(().into())
 		}
 
 		/// Spawn a fresh new account that is guaranteed to be otherwise inaccessible, and
@@ -286,8 +289,13 @@ decl_module! {
 		/// Weight is a function of the number of proxies the user has (P).
 		/// # </weight>
 		/// TODO: Might be over counting 1 read
-		#[weight = T::WeightInfo::anonymous(T::MaxProxies::get().into())]
-		fn anonymous(origin, proxy_type: T::ProxyType, delay: T::BlockNumber, index: u16) {
+		#[pallet::weight(T::WeightInfo::anonymous(T::MaxProxies::get().into()))]
+		fn anonymous(
+			origin: OriginFor<T>,
+			proxy_type: T::ProxyType,
+			delay: T::BlockNumber,
+			index: u16
+		) -> DispatchResultWithPostInfo {
 			let who = ensure_signed(origin)?;
 
 			let anonymous = Self::anonymous_account(&who, &proxy_type, index, None);
@@ -301,6 +309,8 @@ decl_module! {
 			};
 			Proxies::<T>::insert(&anonymous, (vec![proxy_def], deposit));
 			Self::deposit_event(RawEvent::AnonymousCreated(anonymous, who, proxy_type, index));
+
+			Ok(().into())
 		}
 
 		/// Removes a previously spawned anonymous proxy.
@@ -323,14 +333,15 @@ decl_module! {
 		/// # <weight>
 		/// Weight is a function of the number of proxies the user has (P).
 		/// # </weight>
-		#[weight = T::WeightInfo::kill_anonymous(T::MaxProxies::get().into())]
-		fn kill_anonymous(origin,
+		#[pallet::weight(T::WeightInfo::kill_anonymous(T::MaxProxies::get().into()))]
+		fn kill_anonymous(
+			origin: OriginFor<T>,
 			spawner: T::AccountId,
 			proxy_type: T::ProxyType,
 			index: u16,
-			#[compact] height: T::BlockNumber,
-			#[compact] ext_index: u32,
-		) {
+			#[pallet::compact] height: T::BlockNumber,
+			#[pallet::compact] ext_index: u32,
+		) -> DispatchResultWithPostInfo {
 			let who = ensure_signed(origin)?;
 
 			let when = (height, ext_index);
@@ -339,6 +350,8 @@ decl_module! {
 
 			let (_, deposit) = Proxies::<T>::take(&who);
 			T::Currency::unreserve(&spawner, deposit);
+
+			Ok(().into())
 		}
 
 		/// Publish the hash of a proxy-call that will be made in the future.
@@ -362,8 +375,8 @@ decl_module! {
 		/// - A: the number of announcements made.
 		/// - P: the number of proxies the user has.
 		/// # </weight>
-		#[weight = T::WeightInfo::announce(T::MaxPending::get(), T::MaxProxies::get().into())]
-		fn announce(origin, real: T::AccountId, call_hash: CallHashOf<T>) {
+		#[pallet::weight(T::WeightInfo::announce(T::MaxPending::get(), T::MaxProxies::get().into()))]
+		fn announce(origin: OriginFor<T>, real: T::AccountId, call_hash: CallHashOf<T>) -> DispatchResultWithPostInfo{
 			let who = ensure_signed(origin)?;
 			Proxies::<T>::get(&real).0.into_iter()
 				.find(|x| &x.delegate == &who)
@@ -388,6 +401,8 @@ decl_module! {
 				.map(|d| *deposit = d)
 			})?;
 			Self::deposit_event(RawEvent::Announced(real, who, call_hash));
+
+			Ok(().into())
 		}
 
 		/// Remove a given announcement.
@@ -406,10 +421,13 @@ decl_module! {
 		/// - A: the number of announcements made.
 		/// - P: the number of proxies the user has.
 		/// # </weight>
-		#[weight = T::WeightInfo::remove_announcement(T::MaxPending::get(), T::MaxProxies::get().into())]
-		fn remove_announcement(origin, real: T::AccountId, call_hash: CallHashOf<T>) {
+		#[pallet::weight(T::WeightInfo::remove_announcement(T::MaxPending::get(), T::MaxProxies::get().into()))]
+		fn remove_announcement(origin: OriginFor<T>, real: T::AccountId, call_hash: CallHashOf<T>)
+		-> DispatchResultWithPostInfo {
 			let who = ensure_signed(origin)?;
 			Self::edit_announcements(&who, |ann| ann.real != real || ann.call_hash != call_hash)?;
+
+			Ok(().into())
 		}
 
 		/// Remove the given announcement of a delegate.
@@ -428,13 +446,16 @@ decl_module! {
 		/// - A: the number of announcements made.
 		/// - P: the number of proxies the user has.
 		/// # </weight>
-		#[weight = T::WeightInfo::reject_announcement(T::MaxPending::get(), T::MaxProxies::get().into())]
-		fn reject_announcement(origin, delegate: T::AccountId, call_hash: CallHashOf<T>) {
+		#[pallet::weight(T::WeightInfo::reject_announcement(T::MaxPending::get(), T::MaxProxies::get().into()))]
+		fn reject_announcement(origin: OriginFor<T>, delegate: T::AccountId, call_hash: CallHashOf<T>)
+		-> DispatchResultWithPostInfo {
 			let who = ensure_signed(origin)?;
 			Self::edit_announcements(&delegate, |ann| ann.real != who || ann.call_hash != call_hash)?;
+
+			Ok(().into())
 		}
 
-		/// Dispatch the given `call` from an account that the sender is authorised for through
+		/// Dispatch the given `call` from an account that the sender is authorized for through
 		/// `add_proxy`.
 		///
 		/// Removes any corresponding announcement(s).
@@ -451,20 +472,21 @@ decl_module! {
 		/// - A: the number of announcements made.
 		/// - P: the number of proxies the user has.
 		/// # </weight>
-		#[weight = {
+		#[pallet::weight({
 			let di = call.get_dispatch_info();
 			(T::WeightInfo::proxy_announced(T::MaxPending::get(), T::MaxProxies::get().into())
 				.saturating_add(di.weight)
 				 // AccountData for inner call origin accountdata.
 				.saturating_add(T::DbWeight::get().reads_writes(1, 1)),
 			di.class)
-		}]
-		fn proxy_announced(origin,
+		})]
+		fn proxy_announced(
+			origin: OriginFor<T>,
 			delegate: T::AccountId,
 			real: T::AccountId,
 			force_proxy_type: Option<T::ProxyType>,
 			call: Box<<T as Config>::Call>,
-		) {
+		) -> DispatchResultWithPostInfo {
 			ensure_signed(origin)?;
 			let def = Self::find_proxy(&real, &delegate, force_proxy_type)?;
 
@@ -475,9 +497,12 @@ decl_module! {
 			).map_err(|_| Error::<T>::Unannounced)?;
 
 			Self::do_proxy(def, real, *call);
+
+			Ok(().into())
 		}
 	}
 }
+
 
 decl_event! {
 	/// Events type.
@@ -571,7 +596,7 @@ impl<T: Config> Module<T> {
 		delegatee: T::AccountId,
 		proxy_type: T::ProxyType,
 		delay: T::BlockNumber,
-	) -> DispatchResult {
+	) -> DispatchResultWithPostInfo {
 		ensure!(delegator != &delegatee, Error::<T>::NoSelfProxy);
 		Proxies::<T>::try_mutate(delegator, |(ref mut proxies, ref mut deposit)| {
 			ensure!(proxies.len() < T::MaxProxies::get() as usize, Error::<T>::TooMany);
@@ -585,7 +610,7 @@ impl<T: Config> Module<T> {
 				T::Currency::unreserve(delegator, *deposit - new_deposit);
 			}
 			*deposit = new_deposit;
-			Ok(())
+			Ok(().into())
 		})
 	}
 
@@ -602,7 +627,7 @@ impl<T: Config> Module<T> {
 		delegatee: T::AccountId,
 		proxy_type: T::ProxyType,
 		delay: T::BlockNumber,
-	) -> DispatchResult {
+	) -> DispatchResultWithPostInfo {
 		Proxies::<T>::try_mutate_exists(delegator, |x| {
 			let (mut proxies, old_deposit) = x.take().ok_or(Error::<T>::NotFound)?;
 			let proxy_def = ProxyDefinition { delegate: delegatee, proxy_type, delay };
@@ -617,7 +642,7 @@ impl<T: Config> Module<T> {
 			if !proxies.is_empty() {
 				*x = Some((proxies, new_deposit))
 			}
-			Ok(())
+			Ok(().into())
 		})
 	}
 
