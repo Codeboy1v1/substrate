@@ -139,57 +139,6 @@ pub struct Announcement<AccountId, Hash, BlockNumber> {
 
 type CallHashOf<T> = <<T as Config>::CallHasher as Hash>::Output;
 
-decl_storage! {
-	trait Store for Module<T: Config> as Proxy {
-		/// The set of account proxies. Maps the account which has delegated to the accounts
-		/// which are being delegated to, together with the amount held on deposit.
-		pub Proxies get(fn proxies): map hasher(twox_64_concat) T::AccountId
-			=> (Vec<ProxyDefinition<T::AccountId, T::ProxyType, T::BlockNumber>>, BalanceOf<T>);
-
-		/// The announcements made by the proxy (key).
-		pub Announcements get(fn announcements): map hasher(twox_64_concat) T::AccountId
-			=> (Vec<Announcement<T::AccountId, CallHashOf<T>, T::BlockNumber>>, BalanceOf<T>);
-	}
-}
-
-decl_error! {
-	pub enum Error for Module<T: Config> {
-		/// There are too many proxies registered or too many announcements pending.
-		TooMany,
-		/// Proxy registration not found.
-		NotFound,
-		/// Sender is not a proxy of the account to be proxied.
-		NotProxy,
-		/// A call which is incompatible with the proxy type's filter was attempted.
-		Unproxyable,
-		/// Account is already a proxy.
-		Duplicate,
-		/// Call may not be made by proxy because it may escalate its privileges.
-		NoPermission,
-		/// Announcement, if made at all, was made too recently.
-		Unannounced,
-		/// Cannot add self as proxy.
-		NoSelfProxy,
-	}
-}
-
-decl_event! {
-	/// Events type.
-	pub enum Event<T> where
-		AccountId = <T as frame_system::Config>::AccountId,
-		ProxyType = <T as Config>::ProxyType,
-		Hash = CallHashOf<T>,
-	{
-		/// A proxy was executed correctly, with the given \[result\].
-		ProxyExecuted(DispatchResult),
-		/// Anonymous account has been created by new proxy with given
-		/// disambiguation index and proxy type. \[anonymous, who, proxy_type, disambiguation_index\]
-		AnonymousCreated(AccountId, AccountId, ProxyType, u16),
-		/// An announcement was placed to make a call in the future. \[real, proxy, call_hash\]
-		Announced(AccountId, AccountId, Hash),
-	}
-}
-
 decl_module! {
 	pub struct Module<T: Config> for enum Call where origin: T::Origin {
 		type Error = Error<T>;
@@ -524,6 +473,57 @@ decl_module! {
 
 			Self::do_proxy(def, real, *call);
 		}
+	}
+}
+
+decl_event! {
+	/// Events type.
+	pub enum Event<T> where
+		AccountId = <T as frame_system::Config>::AccountId,
+		ProxyType = <T as Config>::ProxyType,
+		Hash = CallHashOf<T>,
+	{
+		/// A proxy was executed correctly, with the given \[result\].
+		ProxyExecuted(DispatchResult),
+		/// Anonymous account has been created by new proxy with given
+		/// disambiguation index and proxy type. \[anonymous, who, proxy_type, disambiguation_index\]
+		AnonymousCreated(AccountId, AccountId, ProxyType, u16),
+		/// An announcement was placed to make a call in the future. \[real, proxy, call_hash\]
+		Announced(AccountId, AccountId, Hash),
+	}
+}
+
+decl_error! {
+	pub enum Error for Module<T: Config> {
+		/// There are too many proxies registered or too many announcements pending.
+		TooMany,
+		/// Proxy registration not found.
+		NotFound,
+		/// Sender is not a proxy of the account to be proxied.
+		NotProxy,
+		/// A call which is incompatible with the proxy type's filter was attempted.
+		Unproxyable,
+		/// Account is already a proxy.
+		Duplicate,
+		/// Call may not be made by proxy because it may escalate its privileges.
+		NoPermission,
+		/// Announcement, if made at all, was made too recently.
+		Unannounced,
+		/// Cannot add self as proxy.
+		NoSelfProxy,
+	}
+}
+
+decl_storage! {
+	trait Store for Module<T: Config> as Proxy {
+		/// The set of account proxies. Maps the account which has delegated to the accounts
+		/// which are being delegated to, together with the amount held on deposit.
+		pub Proxies get(fn proxies): map hasher(twox_64_concat) T::AccountId
+			=> (Vec<ProxyDefinition<T::AccountId, T::ProxyType, T::BlockNumber>>, BalanceOf<T>);
+
+		/// The announcements made by the proxy (key).
+		pub Announcements get(fn announcements): map hasher(twox_64_concat) T::AccountId
+			=> (Vec<Announcement<T::AccountId, CallHashOf<T>, T::BlockNumber>>, BalanceOf<T>);
 	}
 }
 
