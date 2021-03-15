@@ -15,11 +15,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! # Proxy Module
-//! A module allowing accounts to give permission to other accounts to dispatch types of calls from
+//! # Proxy Pallet
+//! A pallet allowing accounts to give permission to other accounts to dispatch types of calls from
 //! their signed origin.
 //!
-//! The accounts to which permission is delegated may be requied to announce the action that they
+//! The accounts to which permission is delegated may be required to announce the action that they
 //! wish to execute some duration prior to execution happens. In this case, the target account may
 //! reject the announcement and in doing so, veto the execution.
 //!
@@ -55,63 +55,9 @@ use frame_system::{self as system, ensure_signed};
 use frame_support::dispatch::DispatchError;
 pub use weights::WeightInfo;
 
+
+
 type BalanceOf<T> = <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
-
-/// Configuration trait.
-pub trait Config: frame_system::Config {
-	/// The overarching event type.
-	type Event: From<Event<Self>> + Into<<Self as frame_system::Config>::Event>;
-
-	/// The overarching call type.
-	type Call: Parameter + Dispatchable<Origin=Self::Origin, PostInfo=PostDispatchInfo>
-		+ GetDispatchInfo + From<frame_system::Call<Self>> + IsSubType<Call<Self>>
-		+ IsType<<Self as frame_system::Config>::Call>;
-
-	/// The currency mechanism.
-	type Currency: ReservableCurrency<Self::AccountId>;
-
-	/// A kind of proxy; specified with the proxy and passed in to the `IsProxyable` fitler.
-	/// The instance filter determines whether a given call may be proxied under this type.
-	///
-	/// IMPORTANT: `Default` must be provided and MUST BE the the *most permissive* value.
-	type ProxyType: Parameter + Member + Ord + PartialOrd + InstanceFilter<<Self as Config>::Call>
-		+ Default;
-
-	/// The base amount of currency needed to reserve for creating a proxy.
-	///
-	/// This is held for an additional storage item whose value size is
-	/// `sizeof(Balance)` bytes and whose key size is `sizeof(AccountId)` bytes.
-	type ProxyDepositBase: Get<BalanceOf<Self>>;
-
-	/// The amount of currency needed per proxy added.
-	///
-	/// This is held for adding 32 bytes plus an instance of `ProxyType` more into a pre-existing
-	/// storage value.
-	type ProxyDepositFactor: Get<BalanceOf<Self>>;
-
-	/// The maximum amount of proxies allowed for a single account.
-	type MaxProxies: Get<u16>;
-
-	/// Weight information for extrinsics in this pallet.
-	type WeightInfo: WeightInfo;
-
-	/// The maximum amount of time-delayed announcements that are allowed to be pending.
-	type MaxPending: Get<u32>;
-
-	/// The type of hash used for hashing the call.
-	type CallHasher: Hash;
-
-	/// The base amount of currency needed to reserve for creating an announcement.
-	///
-	/// This is held when a new storage item holding a `Balance` is created (typically 16 bytes).
-	type AnnouncementDepositBase: Get<BalanceOf<Self>>;
-
-	/// The amount of currency needed per announcement made.
-	///
-	/// This is held for adding an `AccountId`, `Hash` and `BlockNumber` (typically 68 bytes)
-	/// into a pre-existing storage value.
-	type AnnouncementDepositFactor: Get<BalanceOf<Self>>;
-}
 
 /// The parameters under which a particular account has a proxy relationship with some other
 /// account.
@@ -137,6 +83,81 @@ pub struct Announcement<AccountId, Hash, BlockNumber> {
 	height: BlockNumber,
 }
 
+pub use pallet::*;
+
+#[frame_support::pallet]
+pub mod pallet {
+	use frame_support::pallet_prelude::*;
+	use frame_system::pallet_prelude::*;
+	use super::*;
+
+	#[pallet::pallet]
+	#[pallet::generate_store($visibility_of_trait_store trait Store)]
+	pub struct Pallet<T>(_);
+
+	/// Configuration trait.
+	#[pallet::config]
+	pub trait Config: frame_system::Config {
+		/// The overarching event type.
+		type Event: From<Event<Self>> + IsType<<Self as frame_system::Config>::Event>;
+
+		/// The overarching call type.
+		type Call: Parameter + Dispatchable<Origin=Self::Origin, PostInfo=PostDispatchInfo>
+			+ GetDispatchInfo + From<frame_system::Call<Self>> + IsSubType<Call<Self>>
+			+ IsType<<Self as frame_system::Config>::Call>;
+
+		/// The currency mechanism.
+		type Currency: ReservableCurrency<Self::AccountId>;
+
+		/// A kind of proxy; specified with the proxy and passed in to the `IsProxyable` fitler.
+		/// The instance filter determines whether a given call may be proxied under this type.
+		///
+		/// IMPORTANT: `Default` must be provided and MUST BE the the *most permissive* value.
+		type ProxyType: Parameter + Member + Ord + PartialOrd + InstanceFilter<<Self as Config>::Call>
+			+ Default;
+
+		/// The base amount of currency needed to reserve for creating a proxy.
+		///
+		/// This is held for an additional storage item whose value size is
+		/// `sizeof(Balance)` bytes and whose key size is `sizeof(AccountId)` bytes.
+		#[pallet::constant]
+		type ProxyDepositBase: Get<BalanceOf<Self>>;
+
+		/// The amount of currency needed per proxy added.
+		///
+		/// This is held for adding 32 bytes plus an instance of `ProxyType` more into a pre-existing
+		/// storage value.
+		#[pallet::constant]
+		type ProxyDepositFactor: Get<BalanceOf<Self>>;
+
+		/// The maximum amount of proxies allowed for a single account.
+		type MaxProxies: Get<u16>;
+
+		/// Weight information for extrinsics in this pallet.
+		type WeightInfo: WeightInfo;
+
+		/// The maximum amount of time-delayed announcements that are allowed to be pending.
+		#[pallet::constant]
+		type MaxPending: Get<u32>;
+
+		/// The type of hash used for hashing the call.
+		type CallHasher: Hash;
+
+		/// The base amount of currency needed to reserve for creating an announcement.
+		///
+		/// This is held when a new storage item holding a `Balance` is created (typically 16 bytes).
+		#[pallet::constant]
+		type AnnouncementDepositBase: Get<BalanceOf<Self>>;
+
+		/// The amount of currency needed per announcement made.
+		///
+		/// This is held for adding an `AccountId`, `Hash` and `BlockNumber` (typically 68 bytes)
+		/// into a pre-existing storage value.
+		#[pallet::constant]
+		type AnnouncementDepositFactor: Get<BalanceOf<Self>>;
+	}
+}
+
 type CallHashOf<T> = <<T as Config>::CallHasher as Hash>::Output;
 
 decl_module! {
@@ -145,24 +166,6 @@ decl_module! {
 
 		/// Deposit one of this module's events by using the default implementation.
 		fn deposit_event() = default;
-
-		/// The base amount of currency needed to reserve for creating a proxy.
-		const ProxyDepositBase: BalanceOf<T> = T::ProxyDepositBase::get();
-
-		/// The amount of currency needed per proxy added.
-		const ProxyDepositFactor: BalanceOf<T> = T::ProxyDepositFactor::get();
-
-		/// The maximum amount of proxies allowed for a single account.
-		const MaxProxies: u16 = T::MaxProxies::get();
-
-		/// `MaxPending` metadata shadow.
-		const MaxPending: u32 = T::MaxPending::get();
-
-		/// `AnnouncementDepositBase` metadata shadow.
-		const AnnouncementDepositBase: BalanceOf<T> = T::AnnouncementDepositBase::get();
-
-		/// `AnnouncementDepositFactor` metadata shadow.
-		const AnnouncementDepositFactor: BalanceOf<T> = T::AnnouncementDepositFactor::get();
 
 		/// Dispatch the given `call` from an account that the sender is authorised for through
 		/// `add_proxy`.
