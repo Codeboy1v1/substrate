@@ -158,6 +158,44 @@ pub mod pallet {
 		type AnnouncementDepositFactor: Get<BalanceOf<Self>>;
 	}
 
+	#[pallet::event]
+	#[pallet::generate_deposit(pub(super) fn deposit_event)]
+	pub enum Event<T: Config>
+	// TODO why won't this where clause work?
+	// where 
+		// AccountId: <T as frame_system::Config>::AccountId,
+		// ProxyType: <T as Config>::ProxyType,
+		// Hash: CallHashOf<T>
+	{
+		/// A proxy was executed correctly, with the given \[result\].
+		ProxyExecuted(DispatchResult),
+		/// Anonymous account has been created by new proxy with given
+		/// disambiguation index and proxy type. \[anonymous, who, proxy_type, disambiguation_index\]
+		AnonymousCreated(<T as frame_system::Config>::AccountId, <T as frame_system::Config>::AccountId, <T as Config>::ProxyType, u16),
+		/// An announcement was placed to make a call in the future. \[real, proxy, call_hash\]
+		Announced(<T as frame_system::Config>::AccountId, <T as frame_system::Config>::AccountId, CallHashOf<T>),
+	}
+
+	 #[pallet::error]
+	pub enum Error<T> {
+		/// There are too many proxies registered or too many announcements pending.
+		TooMany,
+		/// Proxy registration not found.
+		NotFound,
+		/// Sender is not a proxy of the account to be proxied.
+		NotProxy,
+		/// A call which is incompatible with the proxy type's filter was attempted.
+		Unproxyable,
+		/// Account is already a proxy.
+		Duplicate,
+		/// Call may not be made by proxy because it may escalate its privileges.
+		NoPermission,
+		/// Announcement, if made at all, was made too recently.
+		Unannounced,
+		/// Cannot add self as proxy.
+		NoSelfProxy,
+	}
+
 	#[pallet::hooks]
 	impl<T: Config> Hooks for Pallet<T> {}
 
@@ -186,7 +224,7 @@ pub mod pallet {
 				.saturating_add(T::DbWeight::get().reads_writes(1, 1)),
 			di.class)
 		})]
-		fn proxy(
+		pub(super) fn proxy(
 			origin: OriginFor<T>,
 			real: T::AccountId,
 			force_proxy_type: Option<T::ProxyType>,
@@ -215,7 +253,7 @@ pub mod pallet {
 		/// Weight is a function of the number of proxies the user has (P).
 		/// # </weight>
 		#[pallet::weight(T::WeightInfo::add_proxy(T::MaxProxies::get().into()))]
-		fn add_proxy(
+		pub(super) fn add_proxy(
 			origin: OriginFor<T>,
 			delegate: T::AccountId,
 			proxy_type: T::ProxyType,
@@ -237,7 +275,7 @@ pub mod pallet {
 		/// Weight is a function of the number of proxies the user has (P).
 		/// # </weight>
 		#[pallet::weight(T::WeightInfo::remove_proxy(T::MaxProxies::get().into()))]
-		fn remove_proxy(
+		pub(super) fn remove_proxy(
 			origin: OriginFor<T>,
 			delegate: T::AccountId,
 			proxy_type: T::ProxyType,
@@ -258,7 +296,7 @@ pub mod pallet {
 		/// Weight is a function of the number of proxies the user has (P).
 		/// # </weight>
 		#[pallet::weight(T::WeightInfo::remove_proxies(T::MaxProxies::get().into()))]
-		fn remove_proxies(origin: OriginFor<T>) -> DispatchResultWithPostInfo {
+		pub(super) fn remove_proxies(origin: OriginFor<T>) -> DispatchResultWithPostInfo {
 			let who = ensure_signed(origin)?;
 			let (_, old_deposit) = Proxies::<T>::take(&who);
 			T::Currency::unreserve(&who, old_deposit);
@@ -290,7 +328,7 @@ pub mod pallet {
 		/// # </weight>
 		/// TODO: Might be over counting 1 read
 		#[pallet::weight(T::WeightInfo::anonymous(T::MaxProxies::get().into()))]
-		fn anonymous(
+		pub(super) fn anonymous(
 			origin: OriginFor<T>,
 			proxy_type: T::ProxyType,
 			delay: T::BlockNumber,
@@ -334,7 +372,7 @@ pub mod pallet {
 		/// Weight is a function of the number of proxies the user has (P).
 		/// # </weight>
 		#[pallet::weight(T::WeightInfo::kill_anonymous(T::MaxProxies::get().into()))]
-		fn kill_anonymous(
+		pub(super) fn kill_anonymous(
 			origin: OriginFor<T>,
 			spawner: T::AccountId,
 			proxy_type: T::ProxyType,
@@ -376,7 +414,7 @@ pub mod pallet {
 		/// - P: the number of proxies the user has.
 		/// # </weight>
 		#[pallet::weight(T::WeightInfo::announce(T::MaxPending::get(), T::MaxProxies::get().into()))]
-		fn announce(origin: OriginFor<T>, real: T::AccountId, call_hash: CallHashOf<T>) -> DispatchResultWithPostInfo{
+		pub(super) fn announce(origin: OriginFor<T>, real: T::AccountId, call_hash: CallHashOf<T>) -> DispatchResultWithPostInfo{
 			let who = ensure_signed(origin)?;
 			Proxies::<T>::get(&real).0.into_iter()
 				.find(|x| &x.delegate == &who)
@@ -422,7 +460,7 @@ pub mod pallet {
 		/// - P: the number of proxies the user has.
 		/// # </weight>
 		#[pallet::weight(T::WeightInfo::remove_announcement(T::MaxPending::get(), T::MaxProxies::get().into()))]
-		fn remove_announcement(origin: OriginFor<T>, real: T::AccountId, call_hash: CallHashOf<T>)
+		pub(super) fn remove_announcement(origin: OriginFor<T>, real: T::AccountId, call_hash: CallHashOf<T>)
 		-> DispatchResultWithPostInfo {
 			let who = ensure_signed(origin)?;
 			Self::edit_announcements(&who, |ann| ann.real != real || ann.call_hash != call_hash)?;
@@ -447,7 +485,7 @@ pub mod pallet {
 		/// - P: the number of proxies the user has.
 		/// # </weight>
 		#[pallet::weight(T::WeightInfo::reject_announcement(T::MaxPending::get(), T::MaxProxies::get().into()))]
-		fn reject_announcement(origin: OriginFor<T>, delegate: T::AccountId, call_hash: CallHashOf<T>)
+		pub(super) fn reject_announcement(origin: OriginFor<T>, delegate: T::AccountId, call_hash: CallHashOf<T>)
 		-> DispatchResultWithPostInfo {
 			let who = ensure_signed(origin)?;
 			Self::edit_announcements(&delegate, |ann| ann.real != who || ann.call_hash != call_hash)?;
@@ -480,7 +518,7 @@ pub mod pallet {
 				.saturating_add(T::DbWeight::get().reads_writes(1, 1)),
 			di.class)
 		})]
-		fn proxy_announced(
+		pub(super) fn proxy_announced(
 			origin: OriginFor<T>,
 			delegate: T::AccountId,
 			real: T::AccountId,
@@ -503,43 +541,8 @@ pub mod pallet {
 	}
 }
 
-
-decl_event! {
-	/// Events type.
-	pub enum Event<T> where
-		AccountId = <T as frame_system::Config>::AccountId,
-		ProxyType = <T as Config>::ProxyType,
-		Hash = CallHashOf<T>,
-	{
-		/// A proxy was executed correctly, with the given \[result\].
-		ProxyExecuted(DispatchResult),
-		/// Anonymous account has been created by new proxy with given
-		/// disambiguation index and proxy type. \[anonymous, who, proxy_type, disambiguation_index\]
-		AnonymousCreated(AccountId, AccountId, ProxyType, u16),
-		/// An announcement was placed to make a call in the future. \[real, proxy, call_hash\]
-		Announced(AccountId, AccountId, Hash),
-	}
-}
-
 decl_error! {
-	pub enum Error for Module<T: Config> {
-		/// There are too many proxies registered or too many announcements pending.
-		TooMany,
-		/// Proxy registration not found.
-		NotFound,
-		/// Sender is not a proxy of the account to be proxied.
-		NotProxy,
-		/// A call which is incompatible with the proxy type's filter was attempted.
-		Unproxyable,
-		/// Account is already a proxy.
-		Duplicate,
-		/// Call may not be made by proxy because it may escalate its privileges.
-		NoPermission,
-		/// Announcement, if made at all, was made too recently.
-		Unannounced,
-		/// Cannot add self as proxy.
-		NoSelfProxy,
-	}
+
 }
 
 decl_storage! {
